@@ -53,7 +53,9 @@ void HmlgwComponent::setup() {
     }, this);
     
     if(this->pin_reset_) {
+    	ESP_LOGD(TAG, "Resetting HM module");
         this->pin_reset_->setup();
+        this->reset();
     }
 }
 
@@ -79,12 +81,20 @@ void HmlgwComponent::cleanup() {
         ESP_LOGD(TAG, "Client %s disconnected", (*it)->identifier.c_str());
 
     this->clients_.erase(last_client, this->clients_.end());
+    if(this->clients_.size() == 0) {
+    	this->recv_buf_.clear();
+    	this->message_count_ = 0;
+  	}
     
     last_client = std::partition(this->keepalive_clients_.begin(), this->keepalive_clients_.end(), discriminator);
     for (auto it = last_client; it != this->keepalive_clients_.end(); it++)
         ESP_LOGD(TAG, "Keepalive Client %s disconnected", (*it)->identifier.c_str());
 
     this->keepalive_clients_.erase(last_client, this->keepalive_clients_.end());
+    if(this->keepalive_clients_.size() == 0) {
+    	this->keepalive_recv_buf_.clear();
+    	this->keepalive_count_ = 0;
+    }
 }
 
 int HmlgwComponent::read_bidcos_frame(char *buffer, int bufsize) {
@@ -172,6 +182,7 @@ void HmlgwComponent::read() {
     char buf[4096];
 
     if(this->stream_->available() > 0) {
+    	ESP_LOGD(TAG, "read from UART");
         int res = this->read_bidcos_frame(buf, sizeof(buf));
         if(res > 0 && this->synced_) {
             for(auto const& client : this->clients_)
@@ -204,14 +215,18 @@ void HmlgwComponent::write() {
             }
         }
         
-        if(pos == 0)
+        if(pos == 0) {
+        	ESP_LOGD(TAG, "newline not found in buffer");
             return;
+        }
         
-        if(sscanf((const char*)&this->recv_buf_.data()[1], ">%x,%d", &index, &number) == 2) {
+        if(sscanf((const char*)this->recv_buf_.data(), ">%x,%d", &index, &number) == 2) {
+        	ESP_LOGD(TAG, "index: %x, number: %d, message_count: %d", index, number, this->message_count_);
             if(index == (int)this->message_count_ && number == 0) {
                 this->synced_ = true;
-                // FIXME: Flush serial buffer
+                this->reset();
             }
+            this->recv_buf_.erase(this->recv_buf_.begin(), this->recv_buf_.begin() + pos + 1);
         }
     }
     
