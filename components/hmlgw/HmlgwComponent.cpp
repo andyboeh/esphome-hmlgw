@@ -21,6 +21,9 @@
 
 #define VERSION "0.0.1"
 
+namespace esphome {
+namespace hmlgw {
+
 static const char *TAG = "hmlgw";
 static const char *g_productString = "01,Revilo-HM-LGW," VERSION ",%s\r\n";
 
@@ -39,14 +42,14 @@ void HmlgwComponent::setup() {
         if(tcpClient == nullptr)
             return;
 
-        this->clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->recv_buf_)));
+        this->clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->recv_buf_, this)));
     }, this);
 
     this->keepalive_server_.onClient([this](void *h, AsyncClient *tcpClient) {
         if(tcpClient == nullptr)
             return;
 
-        this->keepalive_clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->keepalive_recv_buf_)));
+        this->keepalive_clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->keepalive_recv_buf_, this)));
     }, this);
     
     if(this->pin_reset_) {
@@ -172,7 +175,7 @@ void HmlgwComponent::read() {
         int res = this->read_bidcos_frame(buf, sizeof(buf));
         if(res > 0 && this->synced_) {
             for(auto const& client : this->clients_)
-                client->tcp_client->write(buf, result);
+                client->tcp_client->write(buf, res);
         }
     }
 }
@@ -204,7 +207,7 @@ void HmlgwComponent::write() {
         if(pos == 0)
             return;
         
-        if(sscanf(this->recv_buf_.data()[1], ">%x,%d", &index, &number) == 2) {
+        if(sscanf((const char*)&this->recv_buf_.data()[1], ">%x,%d", &index, &number) == 2) {
             if(index == (int)this->message_count_ && number == 0) {
                 this->synced_ = true;
                 // FIXME: Flush serial buffer
@@ -233,7 +236,7 @@ void HmlgwComponent::handle_keepalive() {
     
     if(this->keepalive_recv_buf_.at(0) == 'L' || this->keepalive_recv_buf_.at(0) == 'K') {
         int counter;
-        if(1 == sscanf(&this->keepalive_recv_buf_.data()[1], "%x", &counter)) {
+        if(1 == sscanf((const char*)&this->keepalive_recv_buf_.data()[1], "%x", &counter)) {
             if(this->keepalive_recv_buf_.at(0) == 'L') {
                 this->keepalive_count_ = counter;
             }
@@ -262,7 +265,7 @@ void HmlgwComponent::on_shutdown() {
         client->tcp_client->close(true);
 }
 
-HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_buf) :
+HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_buf, HmlgwComponent *parent) :
         tcp_client{client}, identifier{client->remoteIP().toString().c_str()}, disconnected{false} {
     ESP_LOGD(TAG, "New client connected from %s", this->identifier.c_str());
 
@@ -281,15 +284,15 @@ HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_b
     }, nullptr);
 
 
-    sprintf(buf, "H%2.2x,", ++this->message_count_);
-    sprintf(&buf[strlen(buf)], g_productString, this->hm_serial_.c_str());
+    sprintf(buf, "H%2.2x,", ++parent->message_count_);
+    sprintf(&buf[strlen(buf)], g_productString, parent->hm_serial_.c_str());
     this->tcp_client->write(buf, strlen(buf));
-    if(client->localPort() == this->keepalive_port_) {  
-        sprintf(buf, "S%2.2x,SysCom-1.0\r\n", ++this->message_count_);
+    if(client->localPort() == parent->keepalive_port_) {  
+        sprintf(buf, "S%2.2x,SysCom-1.0\r\n", ++parent->message_count_);
         this->tcp_client->write(buf, strlen(buf));
     }
-    if(client->localPort() == this->port_) {
-        sprintf(buf, "S%2.2x,BidCoS-over-LAN-1.0\r\n", ++messageCounter);
+    if(client->localPort() == parent->port_) {
+        sprintf(buf, "S%2.2x,BidCoS-over-LAN-1.0\r\n", ++parent->message_count_);
         this->tcp_client->write(buf, strlen(buf));
     }
 }
@@ -297,4 +300,7 @@ HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_b
 HmlgwComponent::Client::~Client() {
     delete this->tcp_client;
 }
+
+} // hmlgw
+} // esphome
 

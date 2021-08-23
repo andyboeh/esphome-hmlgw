@@ -25,7 +25,8 @@ DEPENDENCIES = ["uart"]
 
 MULTI_CONF = True
 
-HmlgwComponent = cg.global_ns.class_("HmlgwComponent", cg.Component)
+hmlgw_ns = cg.esphome_ns.namespace("hmlgw")
+HmlgwComponent = hmlgw_ns.class_("HmlgwComponent", cg.Component)
 
 CONF_KEEPALIVE_PORT = 'keepalive_port'
 CONF_RESET_PIN = 'reset_pin'
@@ -58,6 +59,6 @@ async def to_code(config):
 		cg.add(var.set_keepalive_port(config[CONF_KEEPALIVE_PORT]))
 	if CONF_RESET_PIN in config:
 		reset = await cg.gpio_pin_expression(config[CONF_RESET_PIN])
-		cg.add(reset)
+		cg.add(var.set_reset_pin(reset))
 
 

@@ -31,7 +31,10 @@
 #include <AsyncTCP.h>
 #endif
 
-class HmlgwComponent : public esphome::Component {
+namespace esphome {
+namespace hmlgw {
+
+class HmlgwComponent : public Component {
 public:
     HmlgwComponent() = default;
     explicit HmlgwComponent(Stream *stream) : stream_{stream} {}
@@ -49,9 +52,10 @@ public:
 
     void set_hm_serial(const std::string &hm_serial) { this->hm_serial_ = hm_serial; }
     
-    void set_reset_pint(GPIOPin *pin_reset) { pin_reset_ = pin_reset; }
+    void set_reset_pin(GPIOPin *pin_reset) { pin_reset_ = pin_reset; }
 
 protected:
+	void reset();
     void cleanup();
     void read();
     void write();
@@ -59,7 +63,7 @@ protected:
     int read_bidcos_frame(char *buffer, int bufsize);
 
     struct Client {
-        Client(AsyncClient *client, std::vector<uint8_t> &recv_buf);
+        Client(AsyncClient *client, std::vector<uint8_t> &recv_buf, HmlgwComponent *parent);
         ~Client();
 
         AsyncClient *tcp_client{nullptr};
@@ -82,4 +86,7 @@ protected:
     unsigned char message_count_{0};
     GPIOPin *pin_reset_{nullptr};
 };
+
+} // namespace hmlgw
+} // namespace esphome
 
