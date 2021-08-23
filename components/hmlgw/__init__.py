@@ -35,27 +35,29 @@ CONFIG_SCHEMA = (
 	cv.Schema(
 		{
 			cv.GenerateID(): cv.declare_id(HmlgwComponent),
-            cv.Required(CONF_HM_SERIAL): cv.string, 
+			cv.Required(CONF_HM_SERIAL): cv.string, 
 			cv.Optional(CONF_PORT): cv.port,
 			cv.Optional(CONF_KEEPALIVE_PORT): cv.port,
-			cv.Optional(CONF_RESET_PIN): cv.gpio_output_pin_schema,
+			cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,
 		}
 	)
 		.extend(cv.COMPONENT_SCHEMA)
 		.extend(uart.UART_DEVICE_SCHEMA)
 )
 
-def to_code(config):
+async def to_code(config):
 	var = cg.new_Pvariable(config[CONF_ID])
-	cg.add(var.set_hm_serial(config[CONF_HM_SERIAL])
+	await cg.register_component(var, config)
+	await uart.register_uart_device(var, config)
+	cg.add(var.set_hm_serial(config[CONF_HM_SERIAL]))
 
 	if CONF_PORT in config:
 		cg.add(var.set_port(config[CONF_PORT]))
 
-    if CONF_KEEPALIVE_PORT in config:
-        cg.add(var.set_keepalive_port(config[CONF_KEEPALIVE_PORT])
-    if CONF_RESET_PIN in config:
-        cg.add(var.set_reset_pin(config[CONF_RESET_PIN])
-	yield cg.register_component(var, config)
-	yield uart.register_uart_device(var, config)
+	if CONF_KEEPALIVE_PORT in config:
+		cg.add(var.set_keepalive_port(config[CONF_KEEPALIVE_PORT]))
+	if CONF_RESET_PIN in config:
+		reset = await cg.gpio_pin_expression(config[CONF_RESET_PIN])
+		cg.add(reset)
+
 
