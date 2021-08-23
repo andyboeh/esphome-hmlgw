@@ -1,0 +1,41 @@
+esphome:
+  name: homematic-gateway1
+  platform: ESP32
+  board: esp-wrover-kit
+
+
+wifi:
+  ssid: "xxxxxxx"
+  password: "xxxxxxxxxxxx"
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "HMLGW Fallback Hotspot"
+    password: "xxxxxxxxxxxxxx"
+
+captive_portal:
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+ota:
+
+external_components:
+  - source: github://andyboeh/esphome-hmlgw
+    components: hmlgw
+
+uart:
+  id: uart_bus
+  baud_rate: 115200
+  tx_pin: 17
+  rx_pin: 5
+
+hmlgw:
+  port: 2000
+  keepalive_port: 2001
+  reset_pin: 33
+  homematic_address: REQ01234567
+
