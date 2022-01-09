@@ -17,8 +17,13 @@
 #pragma once
 
 #include "esphome/core/component.h"
-#include "esphome/core/esphal.h"
 #include "esphome/components/uart/uart.h"
+#include "esphome/core/version.h"
+
+// Provide VERSION_CODE for ESPHome versions lacking it, as existence checking doesn't work for function-like macros
+#ifndef VERSION_CODE
+#define VERSION_CODE(major, minor, patch) ((major) << 16 | (minor) << 8 | (patch))
+#endif
 
 #include <memory>
 #include <string>
@@ -28,7 +33,15 @@
 #ifdef ARDUINO_ARCH_ESP8266
 #include <ESPAsyncTCP.h>
 #else
+// AsyncTCP.h includes parts of freertos, which require FreeRTOS.h header to be included first
+#include <freertos/FreeRTOS.h>
 #include <AsyncTCP.h>
+#endif
+
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+using SSStream = esphome::uart::UARTComponent;
+#else
+using SSStream = Stream;
 #endif
 
 namespace esphome {
@@ -37,7 +50,7 @@ namespace hmlgw {
 class HmlgwComponent : public Component {
 public:
     HmlgwComponent() = default;
-    explicit HmlgwComponent(Stream *stream) : stream_{stream} {}
+    explicit HmlgwComponent(SSStream *stream) : stream_{stream} {}
     void set_uart_parent(esphome::uart::UARTComponent *parent) { this->stream_ = parent; }
 
     void setup() override;
@@ -72,7 +85,7 @@ protected:
     };
 
     bool synced_{false};
-    Stream *stream_{nullptr};
+    SSStream *stream_{nullptr};
     std::string hm_serial_;
     AsyncServer server_{0};
     AsyncServer keepalive_server_{0};

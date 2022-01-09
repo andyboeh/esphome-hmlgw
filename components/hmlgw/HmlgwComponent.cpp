@@ -18,6 +18,10 @@
 
 #include "esphome/core/log.h"
 #include "esphome/core/util.h"
+#include "esphome/core/helpers.h"
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+#include "esphome/components/network/util.h"
+#endif
 
 #define VERSION "0.0.1"
 
@@ -108,7 +112,11 @@ int HmlgwComponent::read_bidcos_frame(char *buffer, int bufsize) {
     
     while (count)
     {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+        int r = this->stream_->read_array(reinterpret_cast<uint8_t*>(buf), 1);
+#else
         int r = this->stream_->readBytes(buf, 1);
+#endif
         if( r <= 0 )
         {
             result = r;
@@ -139,7 +147,7 @@ int HmlgwComponent::read_bidcos_frame(char *buffer, int bufsize) {
         {
             escaped++;
             escapeValue = 0x80;
-            ESP_LOGD(TAG, "ESCAPE msgLen set %d result %d\n", msgLen, result );
+            ESP_LOGD(TAG, "ESCAPE msgLen set %d result %d", msgLen, result );
         }
         else
         {
@@ -159,12 +167,12 @@ int HmlgwComponent::read_bidcos_frame(char *buffer, int bufsize) {
                 msgLen |= *buf; // LSB
                 msgLen |= escapeValue;
                 haveLength = true;
-                ESP_LOGD(TAG, "readBidcosFrame msgLen set %d result %d\n", msgLen, result );
+                ESP_LOGD(TAG, "readBidcosFrame msgLen set %d result %d", msgLen, result );
             }
         }
         else if( result >= msgLen + escaped + 5 )
         {
-            ESP_LOGD(TAG, "readBidcosFrame done, msgLen %d result %d\n", msgLen, result );
+            ESP_LOGD(TAG, "readBidcosFrame done, msgLen %d result %d", msgLen, result );
             break;
         }
         
@@ -203,9 +211,15 @@ void HmlgwComponent::write() {
 
     if(this->synced_) {
         while (len > 0) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+            this->stream_->write_array(this->recv_buf_);
+            this->recv_buf_.clear();
+            len = 0;
+#else
             this->stream_->write(this->recv_buf_.data(), len);
             this->recv_buf_.erase(this->recv_buf_.begin(), this->recv_buf_.begin() + len);
             len = this->recv_buf_.size();
+#endif
         }
     } else {
         for(int i=0; i<len; i++) {
@@ -271,8 +285,21 @@ void HmlgwComponent::handle_keepalive() {
 }
 
 void HmlgwComponent::dump_config() {
-    ESP_LOGCONFIG(TAG, "Stream Server:");
-    ESP_LOGCONFIG(TAG, "  Address: %s:%u", network_get_address().c_str(), this->port_);
+    ESP_LOGCONFIG(TAG, "HMLGW Server:");
+    ESP_LOGCONFIG(TAG, "  Address: %s:%u",
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+                  esphome::network::get_ip_address().str().c_str(),
+#else
+                  network_get_address().c_str(),
+#endif
+                  this->port_);
+    ESP_LOGCONFIG(TAG, "  KeepAlive: %s:%u",
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+                  esphome::network::get_ip_address().str().c_str(),
+#else
+                  network_get_address().c_str(),
+#endif
+                  this->keepalive_port_);
 }
 
 void HmlgwComponent::on_shutdown() {
@@ -285,6 +312,7 @@ HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_b
     ESP_LOGD(TAG, "New client connected from %s", this->identifier.c_str());
 
     char buf[128];
+    unsigned char *count;
 
     this->tcp_client->onError(     [this](void *h, AsyncClient *client, int8_t error)  { this->disconnected = true; });
     this->tcp_client->onDisconnect([this](void *h, AsyncClient *client)                { this->disconnected = true; });
@@ -298,15 +326,17 @@ HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_b
         recv_buf.insert(recv_buf.end(), buf, buf + len);
     }, nullptr);
 
-
-    sprintf(buf, "H%2.2x,", ++parent->message_count_);
-    sprintf(&buf[strlen(buf)], g_productString, parent->hm_serial_.c_str());
-    this->tcp_client->write(buf, strlen(buf));
-    if(client->localPort() == parent->keepalive_port_) {  
-        sprintf(buf, "S%2.2x,SysCom-1.0\r\n", ++parent->message_count_);
+    if(client->localPort() == parent->keepalive_port_) {
+        sprintf(buf, "H%2.2x,", ++parent->keepalive_count_);
+        sprintf(&buf[strlen(buf)], g_productString, parent->hm_serial_.c_str());
+        this->tcp_client->write(buf, strlen(buf));
+        sprintf(buf, "S%2.2x,SysCom-1.0\r\n", ++parent->keepalive_count_);
         this->tcp_client->write(buf, strlen(buf));
     }
     if(client->localPort() == parent->port_) {
+        sprintf(buf, "H%2.2x,", ++parent->message_count_);
+        sprintf(&buf[strlen(buf)], g_productString, parent->hm_serial_.c_str());
+        this->tcp_client->write(buf, strlen(buf));
         sprintf(buf, "S%2.2x,BidCoS-over-LAN-1.0\r\n", ++parent->message_count_);
         this->tcp_client->write(buf, strlen(buf));
     }
