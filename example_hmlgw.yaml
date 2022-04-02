@@ -37,5 +37,4 @@ hmlgw:
   port: 2000
   keepalive_port: 2001
   reset_pin: 33
-  homematic_address: REQ01234567
 
