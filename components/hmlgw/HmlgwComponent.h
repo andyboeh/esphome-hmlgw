@@ -1,4 +1,5 @@
 /* Copyright (C) 2020-2021 Andreas Boehler
+ * Copyright (C) 2015 Oliver Kastl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,8 +63,6 @@ public:
 
     void set_port(uint16_t port) { this->port_ = port; }
     void set_keepalive_port(uint16_t port) { this->keepalive_port_ = port; }
-
-    void set_hm_serial(const std::string &hm_serial) { this->hm_serial_ = hm_serial; }
     
     void set_reset_pin(GPIOPin *pin_reset) { pin_reset_ = pin_reset; }
 
@@ -74,6 +73,9 @@ protected:
     void write();
     void handle_keepalive();
     int read_bidcos_frame(char *buffer, int bufsize);
+    int read_bidcos_frame_retries(char *buffer, int bufsize, int retries);
+    void detect_radio_module();
+    void send_bidcos_frame(uint8_t counter, uint8_t destination, uint8_t command, unsigned char *data, uint8_t data_len);
 
     struct Client {
         Client(AsyncClient *client, std::vector<uint8_t> &recv_buf, HmlgwComponent *parent);
@@ -85,6 +87,7 @@ protected:
     };
 
     bool synced_{false};
+    bool module_ready_{false};
     SSStream *stream_{nullptr};
     std::string hm_serial_;
     AsyncServer server_{0};

@@ -37,7 +37,6 @@ CONFIG_SCHEMA = (
 	cv.Schema(
 		{
 			cv.GenerateID(): cv.declare_id(HmlgwComponent),
-			cv.Required(CONF_HM_SERIAL): cv.string, 
 			cv.Optional(CONF_PORT): cv.port,
 			cv.Optional(CONF_KEEPALIVE_PORT): cv.port,
 			cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,
@@ -51,7 +50,6 @@ async def to_code(config):
 	var = cg.new_Pvariable(config[CONF_ID])
 	await cg.register_component(var, config)
 	await uart.register_uart_device(var, config)
-	cg.add(var.set_hm_serial(config[CONF_HM_SERIAL]))
 
 	if CONF_PORT in config:
 		cg.add(var.set_port(config[CONF_PORT]))

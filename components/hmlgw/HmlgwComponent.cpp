@@ -1,4 +1,6 @@
 /* Copyright (C) 2020-2021 Andreas Boehler
+ * Copyright (C) 2021 Alexander Reinert
+ * Copyright (C) 2015 Oliver Kastl
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +17,7 @@
  */
 
 #include "HmlgwComponent.h"
+#include "HMFrame.h"
 
 #include "esphome/core/log.h"
 #include "esphome/core/util.h"
@@ -37,38 +40,53 @@ void HmlgwComponent::setup() {
     ESP_LOGCONFIG(TAG, "Setting up HMLGW server...");
     this->recv_buf_.reserve(128);
     this->keepalive_recv_buf_.reserve(128);
-
-    this->server_ = AsyncServer(this->port_);
-    this->keepalive_server_ = AsyncServer(this->keepalive_port_);
-    this->server_.begin();
-    this->keepalive_server_.begin();
-    this->server_.onClient([this](void *h, AsyncClient *tcpClient) {
-        if(tcpClient == nullptr)
-            return;
-
-        this->clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->recv_buf_, this)));
-    }, this);
-
-    this->keepalive_server_.onClient([this](void *h, AsyncClient *tcpClient) {
-        if(tcpClient == nullptr)
-            return;
-
-        this->keepalive_clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->keepalive_recv_buf_, this)));
-    }, this);
     
     if(this->pin_reset_) {
     	ESP_LOGD(TAG, "Resetting HM module");
         this->pin_reset_->setup();
         this->reset();
+    } else {
+        detect_radio_module();
+    }
+
+    if(this->module_ready_) {
+        this->server_ = AsyncServer(this->port_);
+        this->keepalive_server_ = AsyncServer(this->keepalive_port_);
+        this->server_.begin();
+        this->keepalive_server_.begin();
+        this->server_.onClient([this](void *h, AsyncClient *tcpClient) {
+            if(tcpClient == nullptr)
+                return;
+
+            this->clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->recv_buf_, this)));
+        }, this);
+
+        this->keepalive_server_.onClient([this](void *h, AsyncClient *tcpClient) {
+            if(tcpClient == nullptr)
+                return;
+
+            this->keepalive_clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->keepalive_recv_buf_, this)));
+        }, this);
     }
 }
 
 void HmlgwComponent::reset() {
+    unsigned char buf;
+
+    this->module_ready_ = false;
     if(this->pin_reset_) {
         this->pin_reset_->digital_write(false);
         delay(10); // roughly 10ms
+        while(this->stream_->available()) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+            this->stream_->read_array(reinterpret_cast<uint8_t*>(&buf), 1);
+#else
+            this->stream_->readBytes(&buf, 1);
+#endif
+        }
         this->pin_reset_->digital_write(true);
     }
+    detect_radio_module();
 }
 
 void HmlgwComponent::loop() {
@@ -99,6 +117,16 @@ void HmlgwComponent::cleanup() {
     	this->keepalive_recv_buf_.clear();
     	this->keepalive_count_ = 0;
     }
+}
+
+int HmlgwComponent::read_bidcos_frame_retries(char *buffer, int bufsize, int retries) {
+    int result = 0;
+    int count = 0;
+    do {
+        result = read_bidcos_frame(buffer, bufsize);
+        count++;
+    } while(result == 0 && count < retries);
+    return result;
 }
 
 int HmlgwComponent::read_bidcos_frame(char *buffer, int bufsize) {
@@ -186,12 +214,16 @@ int HmlgwComponent::read_bidcos_frame(char *buffer, int bufsize) {
 }
 
 void HmlgwComponent::read() {
-    int len;
     char buf[4096];
 
     if(this->stream_->available() > 0) {
     	ESP_LOGD(TAG, "read from UART");
         int res = this->read_bidcos_frame(buf, sizeof(buf));
+        if(res > 0) {
+            HMFrame frame;
+            HMFrame::TryParse((unsigned char *)buf, res, &frame);
+            frame.dump();
+        }
         if(res > 0 && this->synced_) {
             for(auto const& client : this->clients_)
                 client->tcp_client->write(buf, res);
@@ -208,6 +240,9 @@ void HmlgwComponent::write() {
     len = this->recv_buf_.size();
     if(len == 0)
         return;
+
+    std::string datastr = format_hex(this->recv_buf_);
+    ESP_LOGD(TAG, "Received: %s", datastr.c_str());
 
     if(this->synced_) {
         while (len > 0) {
@@ -238,7 +273,6 @@ void HmlgwComponent::write() {
         	ESP_LOGD(TAG, "index: %x, number: %d, message_count: %d", index, number, this->message_count_);
             if(index == (int)this->message_count_ && number == 0) {
                 this->synced_ = true;
-                this->reset();
             }
             this->recv_buf_.erase(this->recv_buf_.begin(), this->recv_buf_.begin() + pos + 1);
         }
@@ -282,6 +316,122 @@ void HmlgwComponent::handle_keepalive() {
         }
      }
      this->keepalive_recv_buf_.erase(this->keepalive_recv_buf_.begin(), this->keepalive_recv_buf_.begin() + pos + 1);
+}
+
+void HmlgwComponent::detect_radio_module() {
+    uint8_t counter = 0;
+    unsigned char buf[1024];
+    uint8_t len;
+    int timeout = 10;
+
+    send_bidcos_frame(counter++, HM_DST_COMMON, HM_CMD_COMMON_IDENTIFY, NULL, 0);
+    len = read_bidcos_frame_retries((char *)buf, 1024, 3);
+    HMFrame frame;
+    if(len > 0) {
+        if(!HMFrame::TryParse(buf, len, &frame)) {
+            ESP_LOGE(TAG, "Error parsing frame");
+            return;
+        }
+        frame.dump();
+    } else {
+        ESP_LOGE(TAG, "Error communicating with HM module.");
+        return;
+    }
+
+    if((frame.destination == HM_DST_HMSYSTEM && frame.command == HM_CMD_HMSYSTEM_ACK && frame.data_len == 10 && frame.data[0] == 2 && strncmp((char *)(frame.data + 1), "Co_CPU_BL", 9) == 0) || (frame.destination == HM_DST_HMSYSTEM && frame.command == 0 && frame.data_len == 9 && strncmp((char *)frame.data, "Co_CPU_BL", 9) == 0)) {
+        // Legacy CoPro in bootloader -> start app
+        send_bidcos_frame(counter++, HM_DST_HMSYSTEM, HM_CMD_HMSYSTEM_CHANGE_APP, NULL, 0);
+
+        while(timeout) {
+            delay(100);
+            len = read_bidcos_frame((char *)buf, 1024);
+            if(len > 0) {
+                if(!HMFrame::TryParse(buf, len, &frame)) {
+                    ESP_LOGE(TAG, "Error parsing frame");
+                    return;
+                }
+                frame.dump();
+            }
+            if(
+                (frame.destination == HM_DST_HMSYSTEM && frame.command == HM_CMD_HMSYSTEM_ACK && frame.data_len == 11 && frame.data[0] == 2 && strncmp((char *)(frame.data + 1), "Co_CPU_App", 10) == 0) || 
+                (frame.destination == HM_DST_HMSYSTEM && frame.command == 0 && frame.data_len == 10 && strncmp((char *)frame.data, "Co_CPU_App", 10) == 0)) {
+                break;
+            }
+            if(
+                (frame.destination == HM_DST_COMMON && frame.command == HM_CMD_COMMON_ACK && frame.data_len == 14 && frame.data[0] == 1 && strncmp((char *)(frame.data + 1), "DualCoPro_App", 13) == 0) || 
+                (frame.destination == HM_DST_COMMON && frame.command == 0 && frame.data_len == 13 && strncmp((char *)frame.data, "DualCoPro_App", 13) == 0)
+                ) {
+                ESP_LOGE(TAG, "Unsupported Homematic Firmware. Please downgrade to HM-Only firmware!");
+                return;
+            }
+            timeout--;
+        }
+    }
+
+    if(!timeout) {
+        ESP_LOGE(TAG, "HM module did not enter App or is not an HM-MOD-RPI-PCB module.");
+        return;
+    }
+
+    send_bidcos_frame(counter++, HM_DST_HMSYSTEM, HM_CMD_HMSYSTEM_GET_VERSION, NULL, 0);
+    len = read_bidcos_frame_retries((char *)buf, 1024, 3);
+    if(len > 0) {
+        HMFrame frame;
+        if(!HMFrame::TryParse(buf, len, &frame)) {
+            ESP_LOGE(TAG, "Error parsing frame");
+        } else {
+            ESP_LOGD(TAG, "Frame parsed successfully.");
+        }
+        frame.dump();
+    }
+
+    send_bidcos_frame(counter++, HM_DST_TRX, HM_CMD_TRX_GET_DEFAULT_RF_ADDR, NULL, 0);
+    len = read_bidcos_frame_retries((char *)buf, 1024, 3);
+    if(len > 0) {
+        HMFrame frame;
+        if(!HMFrame::TryParse(buf, len, &frame)) {
+            ESP_LOGE(TAG, "Error parsing frame");
+        } else {
+            ESP_LOGD(TAG, "Frame parsed successfully.");
+        }
+        frame.dump();
+    }
+
+    send_bidcos_frame(counter++, HM_DST_HMSYSTEM, HM_CMD_HMSYSTEM_GET_SERIAL, NULL, 0);
+    len = read_bidcos_frame_retries((char *)buf, 1024, 3);
+    if(len > 0) {
+        HMFrame frame;
+        if(!HMFrame::TryParse(buf, len, &frame)) {
+            ESP_LOGE(TAG, "Error parsing frame");
+            return;
+        }
+        std::string serial((const char*)frame.data + 1, frame.data_len - 1);
+        this->hm_serial_ = serial;
+        frame.dump();
+    }
+
+    this->module_ready_ = true;
+}
+
+void HmlgwComponent::send_bidcos_frame(uint8_t counter, uint8_t destination, uint8_t command, unsigned char *data, uint8_t data_len) {
+    HMFrame frame;
+    uint8_t buf[8 + data_len + 10];
+
+    frame.counter = counter;
+    frame.destination = destination;
+    frame.command = command;
+    frame.data = data;
+    frame.data_len = data_len;
+    uint16_t len = frame.encode(buf, sizeof(buf), true);
+
+    std::string logstr = format_hex(buf, len);
+    ESP_LOGD(TAG, "Sending HM frame: %s", logstr.c_str());
+
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2021, 10, 0)
+    this->stream_->write_array(buf, len);
+#else
+    this->stream_->write(buf, len);
+#endif
 }
 
 void HmlgwComponent::dump_config() {
