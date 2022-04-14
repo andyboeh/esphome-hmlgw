@@ -115,6 +115,7 @@ void HmlgwComponent::cleanup() {
     if(this->keepalive_clients_.size() == 0) {
     	this->keepalive_recv_buf_.clear();
     	this->keepalive_count_ = 0;
+    	this->synced_ = false;
     }
 }
 
