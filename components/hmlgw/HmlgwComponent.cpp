@@ -101,21 +101,25 @@ void HmlgwComponent::cleanup() {
     for (auto it = last_client; it != this->clients_.end(); it++)
         ESP_LOGD(TAG, "Client %s disconnected", (*it)->identifier.c_str());
 
-    this->clients_.erase(last_client, this->clients_.end());
-    if(this->clients_.size() == 0) {
-    	this->recv_buf_.clear();
-    	this->message_count_ = 0;
+    if(this->clients_.size() > 0) {
+        this->clients_.erase(last_client, this->clients_.end());
+        if(this->clients_.size() == 0) {
+            this->recv_buf_.clear();
+            this->message_count_ = 0;
+        }
   	}
     
     last_client = std::partition(this->keepalive_clients_.begin(), this->keepalive_clients_.end(), discriminator);
     for (auto it = last_client; it != this->keepalive_clients_.end(); it++)
         ESP_LOGD(TAG, "Keepalive Client %s disconnected", (*it)->identifier.c_str());
 
-    this->keepalive_clients_.erase(last_client, this->keepalive_clients_.end());
-    if(this->keepalive_clients_.size() == 0) {
-    	this->keepalive_recv_buf_.clear();
-    	this->keepalive_count_ = 0;
-    	this->synced_ = false;
+    if(this->keepalive_clients_.size() > 0) {
+        this->keepalive_clients_.erase(last_client, this->keepalive_clients_.end());
+        if(this->keepalive_clients_.size() == 0) {
+            this->keepalive_recv_buf_.clear();
+            this->keepalive_count_ = 0;
+            this->synced_ = false;
+        }
     }
 }
 
