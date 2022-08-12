@@ -1,4 +1,4 @@
-/* Copyright (C) 2020-2021 Andreas Boehler
+/* Copyright (C) 2020-2022 Andreas Boehler
  * Copyright (C) 2021 Alexander Reinert
  * Copyright (C) 2015 Oliver Kastl
  *
@@ -25,7 +25,7 @@
 #include "esphome/components/network/util.h"
 #endif
 
-#define VERSION "0.0.1"
+#define VERSION "0.0.2"
 
 namespace esphome {
 namespace hmlgw {
@@ -57,14 +57,14 @@ void HmlgwComponent::setup() {
             if(tcpClient == nullptr)
                 return;
 
-            this->clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->recv_buf_, this)));
+            this->clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->recv_buf_)));
         }, this);
 
         this->keepalive_server_.onClient([this](void *h, AsyncClient *tcpClient) {
             if(tcpClient == nullptr)
                 return;
 
-            this->keepalive_clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->keepalive_recv_buf_, this)));
+            this->keepalive_clients_.push_back(std::unique_ptr<Client>(new Client(tcpClient, this->keepalive_recv_buf_)));
         }, this);
     }
 }
@@ -92,7 +92,36 @@ void HmlgwComponent::loop() {
     this->cleanup();
     this->read();
     this->write();
+    this->handle_init();
     this->handle_keepalive();
+}
+
+void HmlgwComponent::handle_init() {
+    // Make sure that the keepalive port is initialized **after** the data
+    // connection.
+    char buf[128];
+    if(this->need_init_ && this->keepalive_need_init_) {
+        for(auto const& client : this->clients_) {
+            ESP_LOGD(TAG, "Sending INIT packet");
+            sprintf(buf, "H%2.2x,", ++this->message_count_);
+            sprintf(&buf[strlen(buf)], g_productString, this->hm_serial_.c_str());
+            client->tcp_client->write(buf, strlen(buf));
+            sprintf(buf, "S%2.2x,BidCoS-over-LAN-1.0\r\n", ++this->message_count_);
+            client->tcp_client->write(buf, strlen(buf));
+            this->need_init_ = false;
+        }
+    }
+    if(this->keepalive_need_init_ && !this->need_init_) {
+        for(auto const& client : this->keepalive_clients_) {
+            ESP_LOGD(TAG, "Sending keepalive INIT packet");
+            sprintf(buf, "H%2.2x,", ++this->keepalive_count_);
+            sprintf(&buf[strlen(buf)], g_productString, this->hm_serial_.c_str());
+            client->tcp_client->write(buf, strlen(buf));
+            sprintf(buf, "S%2.2x,SysCom-1.0\r\n", ++this->keepalive_count_);
+            client->tcp_client->write(buf, strlen(buf));
+            this->keepalive_need_init_ = false;
+        }
+    }
 }
 
 void HmlgwComponent::cleanup() {
@@ -106,6 +135,7 @@ void HmlgwComponent::cleanup() {
         if(this->clients_.size() == 0) {
             this->recv_buf_.clear();
             this->message_count_ = 0;
+            this->need_init_ = true;
         }
   	}
     
@@ -119,6 +149,7 @@ void HmlgwComponent::cleanup() {
             this->keepalive_recv_buf_.clear();
             this->keepalive_count_ = 0;
             this->synced_ = false;
+            this->keepalive_need_init_ = true;
         }
     }
 }
@@ -459,14 +490,13 @@ void HmlgwComponent::dump_config() {
 void HmlgwComponent::on_shutdown() {
     for (auto &client : this->clients_)
         client->tcp_client->close(true);
+    for (auto &client : this->keepalive_clients_)
+        client->tcp_client->close(true);
 }
 
-HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_buf, HmlgwComponent *parent) :
+HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_buf) :
         tcp_client{client}, identifier{client->remoteIP().toString().c_str()}, disconnected{false} {
     ESP_LOGD(TAG, "New client connected from %s", this->identifier.c_str());
-
-    char buf[128];
-    unsigned char *count;
 
     this->tcp_client->onError(     [this](void *h, AsyncClient *client, int8_t error)  { this->disconnected = true; });
     this->tcp_client->onDisconnect([this](void *h, AsyncClient *client)                { this->disconnected = true; });
@@ -479,21 +509,9 @@ HmlgwComponent::Client::Client(AsyncClient *client, std::vector<uint8_t> &recv_b
         auto buf = static_cast<uint8_t *>(data);
         recv_buf.insert(recv_buf.end(), buf, buf + len);
     }, nullptr);
-
-    if(client->localPort() == parent->keepalive_port_) {
-        sprintf(buf, "H%2.2x,", ++parent->keepalive_count_);
-        sprintf(&buf[strlen(buf)], g_productString, parent->hm_serial_.c_str());
-        this->tcp_client->write(buf, strlen(buf));
-        sprintf(buf, "S%2.2x,SysCom-1.0\r\n", ++parent->keepalive_count_);
-        this->tcp_client->write(buf, strlen(buf));
-    }
-    if(client->localPort() == parent->port_) {
-        sprintf(buf, "H%2.2x,", ++parent->message_count_);
-        sprintf(&buf[strlen(buf)], g_productString, parent->hm_serial_.c_str());
-        this->tcp_client->write(buf, strlen(buf));
-        sprintf(buf, "S%2.2x,BidCoS-over-LAN-1.0\r\n", ++parent->message_count_);
-        this->tcp_client->write(buf, strlen(buf));
-    }
+    // This delay seems to be required for Homegear to ensure that reconnections
+    // work properly - might be required for thread set up.
+    delay(100);
 }
 
 HmlgwComponent::Client::~Client() {

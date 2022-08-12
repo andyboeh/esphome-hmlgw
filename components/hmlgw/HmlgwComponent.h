@@ -1,4 +1,4 @@
-/* Copyright (C) 2020-2021 Andreas Boehler
+/* Copyright (C) 2020-2022 Andreas Boehler
  * Copyright (C) 2015 Oliver Kastl
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,10 +74,11 @@ protected:
     int read_bidcos_frame(char *buffer, int bufsize);
     int read_bidcos_frame_retries(char *buffer, int bufsize, int retries);
     void detect_radio_module();
+    void handle_init();
     void send_bidcos_frame(uint8_t counter, uint8_t destination, uint8_t command, unsigned char *data, uint8_t data_len);
 
     struct Client {
-        Client(AsyncClient *client, std::vector<uint8_t> &recv_buf, HmlgwComponent *parent);
+        Client(AsyncClient *client, std::vector<uint8_t> &recv_buf);
         ~Client();
 
         AsyncClient *tcp_client{nullptr};
@@ -87,6 +88,8 @@ protected:
 
     bool synced_{false};
     bool module_ready_{false};
+    bool need_init_{true};
+    bool keepalive_need_init_{true};
     SSStream *stream_{nullptr};
     std::string hm_serial_;
     AsyncServer server_{0};
