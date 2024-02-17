@@ -136,6 +136,7 @@ void HmlgwComponent::cleanup() {
             this->recv_buf_.clear();
             this->message_count_ = 0;
             this->need_init_ = true;
+            this->reset();
         }
   	}
     
