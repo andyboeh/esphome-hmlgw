@@ -5,6 +5,8 @@ using a HM-MOD-RPI-PCB connected to the pins of an ESP module.
 There is only limited testing being done on a WT32-ETH01 board and the LAN
 connection. WiFi is untested, but should work.
 
+If you like my work, consider sponsoring this project via [Github Sponsors](https://github.com/sponsors/andyboeh) or by acquiring one of my [Amazon Wishlist](https://www.amazon.de/hz/wishlist/ls/ROO2X0G63PCT?ref_=wl_share) items.
+
 ## Implementation
 
 The implementation is heavily based on three other projects:
